@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ввод кода</title>
+
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #000000);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+
+    h2 {
+      margin-bottom: 10px;
+      font-size: 20px;
+      text-align: center;
+    }
+
+    #user-info {
+      margin-bottom: 25px;
+      font-size: 14px;
+      color: var(--tg-theme-hint-color, #888888);
+      text-align: center;
+    }
+
+    .code-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 30px;
+    }
+
+    .code-input {
+      width: 45px;
+      height: 55px;
+      font-size: 24px;
+      font-weight: bold;
+      text-align: center;
+      border: 2px solid var(--tg-theme-hint-color, #ccc);
+      border-radius: 10px;
+      background-color: var(--tg-theme-secondary-bg-color, #f5f5f5);
+      color: var(--tg-theme-text-color, #000);
+      outline: none;
+      transition: border-color 0.2s;
+      box-sizing: border-box;
+    }
+
+    .code-input:focus {
+      border-color: var(--tg-theme-button-color, #2481cc);
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>Введите 5-значный код</h2>
+
+  <!-- Telegram user information display -->
+  <div id="user-info">Загрузка...</div>
+
+  <div class="code-container" id="otp-container">
+    <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code">
+    <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*">
+    <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*">
+    <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*">
+    <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*">
+  </div>
+
+  <script>
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.ready();
+
+    // ==========================================
+    // USER IDENTIFICATION & FALLBACK PARSING
+    // ==========================================
+    let user = tg.initDataUnsafe?.user;
+
+    // Fallback: Parse user object directly from initData string if initDataUnsafe is empty
+    if (!user && tg.initData) {
+      try {
+        const urlParams = new URLSearchParams(tg.initData);
+        const userJson = urlParams.get("user");
+        if (userJson) {
+          user = JSON.parse(userJson);
+        }
+      } catch (e) {
+        console.error("Failed to parse initData user string", e);
+      }
+    }
+
+    const userInfo = document.getElementById("user-info");
+
+    if (user && user.id) {
+      userInfo.textContent = `Telegram User ID: ${user.id}`;
+    } else {
+      userInfo.textContent = "Пользователь Telegram не обнаружен";
+    }
+
+    // ==========================================
+    // INPUT HANDLING & AUTOMATION
+    // ==========================================
+    const inputs = document.querySelectorAll(".code-input");
+    const mainButton = tg.MainButton;
+
+    mainButton.setText("ПОДТВЕРДИТЬ");
+    mainButton.hide();
+
+    inputs.forEach((input, index) => {
+      input.addEventListener("input", (event) => {
+        event.target.value = event.target.value.replace(/\D/g, "");
+        if (event.target.value.length === 1 && index < inputs.length - 1) {
+          inputs[index + 1].focus();
+        }
+        checkFullCode();
+      });
+
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Backspace" && !input.value && index > 0) {
+          inputs[index - 1].focus();
+        }
+      });
+
+      input.addEventListener("paste", (event) => {
+        event.preventDefault();
+        const pastedText = event.clipboardData.getData("text").replace(/\D/g, "");
+        if (!pastedText) return;
+
+        for (let i = 0; i < pastedText.length && index + i < inputs.length; i++) {
+          inputs[index + i].value = pastedText[i];
+        }
+        const nextIndex = Math.min(index + pastedText.length, inputs.length - 1);
+        inputs[nextIndex].focus();
+        checkFullCode();
+      });
+    });
+
+    function getCode() {
+      let code = "";
+      inputs.forEach((input) => { code += input.value; });
+      return code;
+    }
+
+    function checkFullCode() {
+      const code = getCode();
+      if (code.length === 5 && /^\d{5}$/.test(code)) {
+        mainButton.show();
+      } else {
+        mainButton.hide();
+      }
+    }
+
+    // ==========================================
+    // DATA SUBMISSION (DUAL MODE)
+    // ==========================================
+    mainButton.onClick(async () => {
+      const code = getCode();
+      if (code.length !== 5 || !/^\d{5}$/.test(code)) return;
+
+      mainButton.showProgress();
+
+      try {
+        // Primary Attempt: Post via backend REST API (Works Everywhere)
+        const response = await fetch("/submit-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            initData: tg.initData,
+            code: code
+          })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          tg.close();
+        } else {
+          // Secondary Fallback: Use Telegram Native direct bridge
+          tg.sendData(JSON.stringify({ code: code }));
+        }
+      } catch (err) {
+        // Network/Fallback handler
+        tg.sendData(JSON.stringify({ code: code }));
+      } finally {
+        mainButton.hideProgress();
+      }
+    });
+
+    if (inputs.length > 0) {
+      inputs[0].focus();
+    }
+  </script>
+</body>
+</html>
